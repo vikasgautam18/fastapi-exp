@@ -1,9 +1,9 @@
-from typing_extensions import Annotated
-
-from fastapi import FastAPI, status, Depends, HTTPException  # type: ignore[import]
+from typing import Annotated
+from fastapi import FastAPI, status, Depends, HTTPException, Header  # type: ignore[import]
 from pydantic import BaseModel # type: ignore[import]
+from dotenv import load_dotenv # type: ignore[import]
 
-app = FastAPI()
+import os
 
 class TaskIn(BaseModel):
     title: str
@@ -20,6 +20,10 @@ class TaskOut(BaseModel):
 task_id = 0
 tasks = {}
 
+load_dotenv()  # Load environment variables from .env file
+
+API_KEY = os.getenv("API_KEY")  # Get the API key from environment variables
+
 async def get_existing_task(task_id: int):
     task = tasks.get(task_id)
     if task is None:
@@ -29,12 +33,20 @@ async def get_existing_task(task_id: int):
 async def get_paginated_tasks(skip: int = 0, limit: int = 10):
     return {"skip": skip, "limit": limit}
 
+async def verify_api_key(x_api_key: str = Header()):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key")
+    
+    return x_api_key
+
+app = FastAPI(dependencies=[Depends(verify_api_key)])
+
 @app.get("/health")
 async def health_check():
     return {"Message": "OK"}
 
 @app.post("/tasks", response_model=TaskOut)
-async def create_task(task: TaskIn):
+async def create_task(task: TaskIn, _: Annotated[str, Depends(verify_api_key)]):
     global task_id
     task_id += 1
     tasks[task_id] = task
@@ -53,7 +65,7 @@ async def read_tasks(done: bool | None = None, pagination: Annotated[dict, Depen
     return [TaskOut(task_id=tid, **t.dict()) for tid, t in page]
 
 @app.put("/tasks/{task_id}", response_model=TaskOut)
-async def update_task(task_id: int, task: TaskIn, existingtask: Annotated[TaskIn, Depends(get_existing_task)]):
+async def update_task(task_id: int, task: TaskIn, existingtask: Annotated[TaskIn, Depends(get_existing_task)], _: Annotated[str, Depends(verify_api_key)]):
     
     tasks[task_id] = task
     return TaskOut(task_id=task_id, **task.dict())
